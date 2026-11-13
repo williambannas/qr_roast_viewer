@@ -183,12 +183,36 @@ def unpack_deltas(buf):
     return out
 
 
+TEMP_KEYS = ("cb", "ce", "db", "de", "fb")     # charge / drop bean and environment temps, first-crack bean temp
+
+
+def pack_temps(meta):
+    """Pull the five temperatures out of the meta dict into a 7-byte block of 10-bit values (1023 = not recorded)."""
+    bits = 0
+    for k in TEMP_KEYS:
+        v = meta.pop(k, None)
+        v = 1023 if v is None else max(0, min(1022, int(round(v))))
+        bits = (bits << 10) | v
+    return bits.to_bytes(7, "big")
+
+
+def unpack_temps(block, meta):
+    bits = int.from_bytes(block, "big")
+    for i, k in enumerate(TEMP_KEYS):
+        v = (bits >> (10 * (len(TEMP_KEYS) - 1 - i))) & 1023
+        if v != 1023:
+            meta[k] = v
+
+
 def encode(meta, deltas, ror=None):
+    meta = dict(meta)
     tail = b""
     if ror:
         tail = pack_deltas(ror)
-        meta = dict(meta, rl=len(tail))                      # rl: how many bytes at the very end are the RoR section
-    raw = json.dumps(meta, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n" + pack_deltas(deltas) + tail
+        meta["rl"] = len(tail)                               # rl: how many bytes sit between the curve and the temps block
+    temps = pack_temps(meta)                                 # the temps block always closes the payload; "h" marks it
+    meta["h"] = 1
+    raw = json.dumps(meta, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n" + pack_deltas(deltas) + tail + temps
     return base64.urlsafe_b64encode(zlib.compress(raw, 9)).decode().rstrip("=")
 
 
@@ -202,6 +226,9 @@ def decode(text):
     raw = zlib.decompress(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
     head, _, tail = raw.partition(b"\n")
     meta = json.loads(head.decode("utf-8"))
+    if meta.get("h"):                                        # newest codes: the five temps are a 7-byte block at the very end
+        tail, block = tail[:-7], tail[-7:]
+        unpack_temps(block, meta)
     rl = int(meta.get("rl", 0) or 0)
     if rl:
         tail, rtail = tail[:-rl], tail[-rl:]

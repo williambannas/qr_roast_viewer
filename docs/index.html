@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Jd7YGTFUMfv3UnBygzYI/nuIwFJLc+1ir0qD4PYrvyM='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-h5zM6zsCFgHVxonyZ4Hl1OKLzwBfOZsnh6x4nG9tO6U='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -134,7 +134,13 @@ async function decode(text) {
   }
   const nl = raw.indexOf(10);
   const meta = JSON.parse(new TextDecoder().decode(raw.slice(0, nl)));
-  const all = raw.slice(nl + 1);
+  let all = raw.slice(nl + 1);
+  if (meta.h) {                                                           // h: the last 7 bytes hold five 10-bit temperatures (1023 = none)
+    let bits = 0n;
+    for (const b of all.slice(all.length - 7)) bits = (bits << 8n) | BigInt(b);
+    ["cb", "ce", "db", "de", "fb"].forEach((k, i) => { const v = Number((bits >> BigInt(10 * (4 - i))) & 1023n); if (v !== 1023) meta[k] = v; });
+    all = all.slice(0, all.length - 7);
+  }
   const rl = Math.max(0, Math.min(all.length, num(meta.rl)));           // rl: bytes at the very end holding the recorded RoR
   const unpack = (buf, first) => {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength), out = [first];
