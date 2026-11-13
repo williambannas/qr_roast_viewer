@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/qTN9hiTDG055ESTSoepCDyg4SUekN5hzWHn3JuGmvk='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Y9FNsZ6FH0zT7gPrE9AV0jNLilLRcbG3E/7Y6J0WuOY='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -204,8 +204,7 @@ function drawChart(meta, bt, rec) {
   const ridx = idx;   // the rate line starts at the turning point so the dip and recovery show
   // axis range: the steep climb right after the turn is clipped off the top, not allowed to flatten the rest
   const rs = idx.filter((i) => rec || (i - tp) * step >= 45).map((i) => ror[i]);
-  const lo = Math.max(-20, Math.min(...idx.map((i) => ror[i])));
-  const rMin = Math.min(0, Math.floor(lo / 5) * 5), rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);
+  const rMin = 0, rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);   // rate axis starts at 0: anything below is clipped off
   const X = (t) => L + (t / tMax) * (W - L - R);
   const YB = (v) => H - B - ((v - bMin) / (bMax - bMin)) * (H - T - B);
   const YR = (v) => H - B - ((v - rMin) / (rMax - rMin)) * (H - T - B);
