@@ -30,7 +30,7 @@ Settings can also come from the environment: `VIEWER_URL`, `PRINTER`, `BAG_WEIGH
 
 ## The viewer page (GitHub Pages)
 
-The QR code holds a link like `https://<you>.github.io/bean-me-up/#<compressed roast data>`. The data sits after the
+The QR code holds a link like `https://williambannas.github.io/qr_roast_viewer/#<compressed roast data>`. The data sits after the
 `#`, so the browser reads it and the server never receives it. The page draws the roast and the bean-temp and
 rate-of-rise curves.
 
@@ -38,7 +38,7 @@ To publish it: on GitHub open the repository, **Settings > Pages**, choose **Dep
 folder `/docs`. (GitHub Pages is free for public repositories.) Then point the labels at the page:
 
 ```
-export VIEWER_URL=https://<you>.github.io/bean-me-up/
+export VIEWER_URL=https://williambannas.github.io/qr_roast_viewer/
 ```
 
 or change `DEFAULT_VIEWER_URL` in `artisan_qr_label.py`.
