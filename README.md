@@ -6,7 +6,7 @@ scanning the label's QR code.
 - `artisan_qr_label.py` - label with the roast time (UTC), bag weight and a QR code holding the whole roast
   (details + bean-temperature curve). Scanning it opens the viewer page.
 - `artisan_labels.py` - the original text label (name, notes, roast level, stats), and shared helpers.
-- `docs/index.html` - the viewer page (static, runs entirely in the browser, hosted with GitHub Pages).
+- `docs/index.html` - the viewer page (static, runs entirely in the browser, hosted on Cloudflare Pages).
 - `fonts/` - fonts used by the labels. Keep this folder next to the scripts.
 
 ## Set up
@@ -28,17 +28,22 @@ Useful options: `--shift-x/--shift-y` (nudge the print), `--density` (default 5)
 `--viewer-url` (where the QR points), `--title`, `--decode "<scanned text>"`. Run with `--help` for all of them.
 Settings can also come from the environment: `VIEWER_URL`, `PRINTER`, `BAG_WEIGHT`, `ROAST_DIR`, `SHIFT_X`, `SHIFT_Y`.
 
-## The viewer page (GitHub Pages)
+## The viewer page (Cloudflare Pages)
 
-The QR code holds a link like `https://williambannas.github.io/qr_roast_viewer/#<compressed roast data>`. The data sits after the
+The QR code holds a link like `https://<your-project>.pages.dev/#<compressed roast data>`. The data sits after the
 `#`, so the browser reads it and the server never receives it. The page draws the roast and the bean-temp and
-rate-of-rise curves.
+rate-of-rise curves. It is plain static files in `docs/`: no build step.
 
-To publish it: on GitHub open the repository, **Settings > Pages**, choose **Deploy from a branch**, branch `main`,
-folder `/docs`. (GitHub Pages is free for public repositories.) Then point the labels at the page:
+To publish it: in the Cloudflare dashboard open **Workers & Pages > Create application > Pages > Connect to Git**,
+pick this repository, leave the **build command** empty and set the **build output directory** to `docs`.
+Every push to `main` then redeploys the page. `docs/_headers` adds a few security headers.
+
+The address ends up on every printed label, so choose it with care: the project name decides the `*.pages.dev`
+hostname (and cannot be renamed later), or attach a custom domain of your own in the project's settings.
+Then point the labels at it:
 
 ```
-export VIEWER_URL=https://williambannas.github.io/qr_roast_viewer/
+export VIEWER_URL=https://<your-project>.pages.dev/
 ```
 
 or change `DEFAULT_VIEWER_URL` in `artisan_qr_label.py`.
