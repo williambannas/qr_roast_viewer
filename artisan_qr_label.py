@@ -30,7 +30,7 @@ try:
 except ImportError:
     segno = None
 
-DEFAULT_VIEWER_URL = "https://williambannas.github.io/qr_roast_viewer/"
+DEFAULT_VIEWER_URL = "https://qr-roast-viewer.wrschwartz.workers.dev/"
 PREFIX = "BB1:"                                  # old codes had this; new ones are plain text (phones reject "xxx:" as an unknown link type)
 QUIET = 2                                         # quiet-zone modules around the QR code
 STEPS = (5,)                                      # bean-temp curve sampled every 5 seconds
