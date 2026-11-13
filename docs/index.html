@@ -1,0 +1,299 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-BGV+rhKLIGgGEFmDnmtUfahXU6Yzg6JVlCymSa4Xq6I='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
+:root {
+  --bg: #f1f3f0;
+  --panel: #ffffff;
+  --fg: #19201d;
+  --muted: #5d6a64;
+  --line: #d3d9d5;
+  --bt: #0e5c4c;
+  --ror: #c25e12;
+  --mark: #7a8680;
+  --accent: #0e5c4c;
+  --accent-fg: #ffffff;
+  --display: "Space Grotesk", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101513; --panel: #19201d; --fg: #e8efe9; --muted: #98a79f; --line: #2c3631;
+    --bt: #4fd1ae; --ror: #f0955a; --mark: #7f8d86; --accent: #4fd1ae; --accent-fg: #0b1512;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101513; --panel: #19201d; --fg: #e8efe9; --muted: #98a79f; --line: #2c3631;
+  --bt: #4fd1ae; --ror: #f0955a; --mark: #7f8d86; --accent: #4fd1ae; --accent-fg: #0b1512;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--mono); padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+[hidden] { display: none !important; }
+h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; }
+.top { display: flex; flex-direction: column; gap: 4px; }
+.top h1 { font-size: 15px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.top p { margin: 0; color: var(--muted); font-size: 13px; }
+.paste { display: flex; flex-direction: column; gap: 8px; }
+.paste label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+textarea { width: 100%; min-height: 76px; resize: vertical; font: 13px/1.4 var(--mono); color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px; word-break: break-all; }
+textarea:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+button { font: 500 14px var(--mono); background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 6px; padding: 9px 16px; cursor: pointer; }
+button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+#msg { font-size: 13px; color: var(--muted); }
+#msg.err { color: var(--ror); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.head { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+.head h2 { font-size: 24px; line-height: 1.2; font-weight: 700; flex: 1 1 260px; min-width: 0; }
+.meta { font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; }
+.notes { margin: 0; font-size: 14px; }
+.tag { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.example { color: var(--ror); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 14px 18px; margin: 0; }
+.stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stats dt { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.stats dd { margin: 0; font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.stats dd small { font: 400 13px var(--mono); color: var(--muted); }
+.chart { width: 100%; height: auto; display: block; }
+.legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+details { border-top: 1px solid var(--line); padding-top: 14px; }
+summary { cursor: pointer; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 14px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+svg text { font-family: var(--mono); }
+</style>
+
+<main>
+  <div class="top">
+    <h1>Roast viewer</h1>
+    <p>Scan a Buddy Beans label with your phone camera, copy the text it shows, and paste it below.</p>
+  </div>
+
+  <section class="paste">
+    <label for="code">Scanned code</label>
+    <textarea id="code" spellcheck="false" autocomplete="off" placeholder="eNpV..."></textarea>
+    <div class="row">
+      <button id="go" type="button">Show roast</button>
+      <button id="sample" class="ghost" type="button">Load example</button>
+      <span id="msg" role="status"></span>
+    </div>
+  </section>
+
+  <section class="card" id="card" hidden>
+    <div class="head">
+      <h2 id="name"></h2>
+      <div class="meta" id="meta"></div>
+    </div>
+    <p class="notes" id="notes"></p>
+    <dl class="stats" id="stats"></dl>
+    <div>
+      <svg class="chart" id="chart" viewBox="0 0 640 320" role="img" aria-label="Bean temperature and rate of rise over roast time"></svg>
+      <div class="legend">
+        <span><i style="background:var(--bt)"></i>Bean temp</span>
+        <span><i style="background:var(--ror)"></i>Rate of rise (per min)</span>
+      </div>
+    </div>
+    <details>
+      <summary>All data in the code</summary>
+      <dl class="kv" id="kv"></dl>
+    </details>
+  </section>
+</main>
+
+<script>
+const SAMPLE = "eNpVTz1rwzAQleykhYwdOx03iyD5I8beSiBk6NB06RA6yJJbBLYV_NESSqH_PD07XSrd6U7vne6evvADi0hgiwXutak0bH3tm9JpOIyutc7DVjcnD_uqa3yv4Un3vfMt7LrRDSiwxyIVWGFxjOKNiPNcyHknWfwqsJTUXSqB44CFynKqSVIZE0Hz8oTet0RgWY8VPOv-VFZddwajW3v-Pwl2te90DY_aDM7Ag3EWXlxtqUP5SR2S9J1Syo4qlWspVBytFQmo6XuK7mjKPyWGtKqYEDsjpMVOyIaSN0JUnn2vfg6X1f3d7c1ysVyEYRBOzoMgIGdknPOA82tCgTM-wRQ4m0_OZobWhU2l1yubbSZ_AadqUHE";
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+const fmtT = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+
+async function inflate(bytes) {
+  const ds = new DecompressionStream("deflate");
+  const w = ds.writable.getWriter();
+  w.write(bytes); w.close();
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+}
+
+async function decode(text) {
+  let s = text.replace(/\s+/g, "").replace(/^.*#/, "").replace(/^BB1:/, "");
+  let raw;
+  try {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    const bin = atob(s);
+    raw = await inflate(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch (e) {
+    if (e instanceof ReferenceError) throw e;
+    throw new Error("That text isn't a Buddy Beans roast code. Copy all of the text the scan shows.");
+  }
+  const nl = raw.indexOf(10);
+  const meta = JSON.parse(new TextDecoder().decode(raw.slice(0, nl)));
+  const tail = raw.slice(nl + 1), dv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  const q = [meta.b0];
+  for (let p = 0; p < tail.length; ) {
+    const b = dv.getInt8(p);
+    if (b === -128) { q.push(q[q.length - 1] + dv.getInt16(p + 1, true)); p += 3; }
+    else { q.push(q[q.length - 1] + b); p += 1; }
+  }
+  if (!meta || typeof meta !== "object" || q.length > 5000) throw new Error("That text isn't a Buddy Beans roast code.");
+  meta.s = Math.max(1, num(meta.s, 5));
+  meta.u = meta.u === "F" ? "F" : "C";                       // v2 codes: always whole degrees C
+  return { meta, bt: meta.v >= 2 ? q : q.map((v) => v / 2) };   // v1 codes stored half-degrees
+}
+
+function rorSeries(bt, step) {
+  const k = Math.max(1, Math.round(30 / step)), n = bt.length;
+  const raw = bt.map((_, i) => {
+    const a = Math.max(0, i - k), b = Math.min(n - 1, i + k);
+    return (bt[b] - bt[a]) / ((b - a) * step) * 60;
+  });
+  return raw.map((_, i) => { const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1); let s = 0; for (let j = a; j <= b; j++) s += raw[j]; return s / (b - a + 1); });
+}
+
+function levelDots(lv) {
+  lv = num(lv);
+  let out = "";
+  for (let i = 0; i < 4; i++) {
+    const x = 11 + i * 24, full = lv === i + 1, right = lv === i + 1.5, left = lv === i + 0.5;
+    out += `<circle cx="${x}" cy="11" r="9" fill="${full ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"/>`;
+    if (right) out += `<path d="M${x} 2a9 9 0 0 1 0 18z" fill="currentColor"/>`;
+    if (left) out += `<path d="M${x} 2a9 9 0 0 0 0 18z" fill="currentColor"/>`;
+  }
+  return `<svg width="100" height="22" viewBox="0 0 100 22" aria-label="Roast level ${lv} of 4">${out}</svg>`;
+}
+
+function niceStep(range, target) {
+  const raw = range / target, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
+function drawChart(meta, bt) {
+  const step = meta.s, n = bt.length;
+  const ror = rorSeries(bt, step);
+  // start the lines at the turning point (lowest bean temp in the first two minutes)
+  let tp = 0;
+  for (let i = 1; i < Math.min(n, Math.ceil(120 / step) + 1); i++) if (bt[i] < bt[tp]) tp = i;
+  const idx = []; for (let i = tp; i < n; i++) idx.push(i);
+  const W = Math.max(300, Math.round($("chart").parentElement.clientWidth)), H = Math.max(260, Math.round(W * 0.5)), L = 44, R = 44, T = 40, B = 34;
+  $("chart").setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const tMax = (n - 1) * step;
+  const bMin = Math.floor(Math.min(...idx.map((i) => bt[i])) / 20) * 20, bMax = Math.ceil(Math.max(...idx.map((i) => bt[i])) / 20) * 20;
+  const ridx = idx.filter((i) => (i - tp) * step >= 45);   // RoR is noisy right after the turning point
+  const rs = ridx.map((i) => ror[i]);
+  const rMin = Math.min(0, Math.floor(Math.min(...rs) / 5) * 5), rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);
+  const X = (t) => L + (t / tMax) * (W - L - R);
+  const YB = (v) => H - B - ((v - bMin) / (bMax - bMin)) * (H - T - B);
+  const YR = (v) => H - B - ((v - rMin) / (rMax - rMin)) * (H - T - B);
+  let g = "";
+  const bs = niceStep(bMax - bMin, 5);
+  for (let v = bMin; v <= bMax + 1e-6; v += bs) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${YB(v)}" y2="${YB(v)}" stroke="var(--line)"/>` +
+         `<text x="${L - 6}" y="${YB(v) + 4}" text-anchor="end" font-size="11" fill="var(--bt)">${Math.round(v)}</text>`;
+  }
+  const rstep = niceStep(rMax - rMin, 4);
+  for (let v = Math.ceil(rMin / rstep) * rstep; v <= rMax + 1e-6; v += rstep) {
+    g += `<text x="${W - R + 6}" y="${YR(v) + 4}" font-size="11" fill="var(--ror)">${Math.round(v)}</text>`;
+  }
+  const ts = niceStep(tMax, 8);
+  const ts2 = ts < 30 ? 30 : ts < 60 ? 60 : Math.ceil(ts / 60) * 60;
+  for (let t = 0; t <= tMax + 1e-6; t += ts2) {
+    g += `<line x1="${X(t)}" x2="${X(t)}" y1="${H - B}" y2="${H - B + 4}" stroke="var(--mark)"/>` +
+         `<text x="${X(t)}" y="${H - B + 18}" text-anchor="middle" font-size="11" fill="var(--muted)">${fmtT(t)}</text>`;
+  }
+  g += `<text x="${L - 6}" y="${T - 12}" text-anchor="end" font-size="11" fill="var(--bt)">&deg;${esc(meta.u)}</text>` +
+       `<text x="${W - R + 6}" y="${T - 12}" font-size="11" fill="var(--ror)">&deg;${esc(meta.u)}/min</text>`;
+  const names = ["Dry", "FC", "FC end", "SC", "SC end", "Drop"];
+  let shown = 0;
+  (Array.isArray(meta.e) ? meta.e : []).slice(0, 6).map((t) => num(t)).forEach((t, k) => {
+    if (!t) return;
+    const ly = T - 10 - (shown++ % 2) * 14;
+    const anchor = k === 5 ? "end" : "middle";
+    g += `<line x1="${X(t)}" x2="${X(t)}" y1="${T}" y2="${H - B}" stroke="var(--mark)" stroke-dasharray="3 4"/>` +
+         `<text x="${X(t) + (k === 5 ? -4 : 0)}" y="${ly}" text-anchor="${anchor}" font-size="11" fill="var(--muted)">${names[k]} ${fmtT(t)}</text>`;
+  });
+  const path = (fn, yf, ix = idx) => ix.map((i, j) => (j ? "L" : "M") + X(i * step).toFixed(1) + " " + yf(fn(i)).toFixed(1)).join("");
+  g += `<path d="${path((i) => ror[i], YR, ridx)}" fill="none" stroke="var(--ror)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#plot)"/>`;
+  g += `<path d="${path((i) => bt[i], YB)}" fill="none" stroke="var(--bt)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const last = n - 1;
+  g += `<circle cx="${X(last * step)}" cy="${YB(bt[last])}" r="4" fill="var(--bt)"/>`;
+  $("chart").innerHTML = `<defs><clipPath id="plot"><rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/></clipPath></defs>` + g;
+}
+
+let CUR = null;
+window.addEventListener("resize", () => { if (CUR && !$("card").hidden) drawChart(CUR.meta, CUR.bt); });
+
+const utcStr = (meta) => {
+  if (!meta.ut) return meta.d;
+  const d = new Date(meta.ut * 1000), p = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+};
+
+function show(meta, bt) {
+  CUR = { meta, bt };
+  const ev0 = (Array.isArray(meta.e) ? meta.e : []).map((t) => num(t));
+  meta.T = num(meta.T) || ev0[5] || 0;                                   // roast time = drop time
+  meta.dv = num(meta.dv) || (ev0[1] && ev0[5] ? ev0[5] - ev0[1] : 0);   // development = drop - first crack
+  $("card").hidden = false;
+  $("name").textContent = meta.n;
+  $("meta").innerHTML = `${esc(utcStr(meta))}${meta.b ? "<br>batch " + esc(meta.b) : ""}${meta.bw ? "<br>" + esc(meta.bw) + " bag" : ""}`;
+  $("notes").textContent = meta.nt || "";
+  $("notes").hidden = !meta.nt;
+  const loss = meta.w && num(meta.w[0]) ? (1 - num(meta.w[1]) / num(meta.w[0])) * 100 : null;
+  const dtr = meta.dv && meta.T ? (meta.dv / meta.T) * 100 : null;
+  const items = [
+    ["Drop temp", meta.db != null ? `${num(meta.db)}<small> &deg;${esc(meta.u)}</small>` : "&ndash;"],
+    ["Roast time", meta.T ? fmtT(meta.T) : "&ndash;"],
+    ["Development", dtr != null ? `${dtr.toFixed(1)}<small> %</small>` : "&ndash;"],
+    ["Weight loss", loss != null ? `${loss.toFixed(1)}<small> %</small>` : "&ndash;"],
+  ];
+  if (meta.lv) items.push(["Roast level", levelDots(meta.lv)]);
+  $("stats").innerHTML = items.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  $("chart").parentElement.hidden = bt.length < 2;
+  if (bt.length >= 2) drawChart(meta, bt);
+  const ev = (Array.isArray(meta.e) ? meta.e : []).slice(0, 6).map((t) => num(t)), nm = ["Dry end", "First crack", "First crack end", "Second crack", "Second crack end", "Drop"];
+  const kv = [];
+  kv.push(["Coffee", meta.n], [meta.ut ? "Roast start" : "Roast date", utcStr(meta)]);
+  if (meta.b) kv.push(["Batch", meta.b]);
+  if (meta.w) kv.push(["Charge / drop weight", `${num(meta.w[0])}${meta.w[2] || "g"} / ${num(meta.w[1])}${meta.w[2] || "g"}`]);
+  if (meta.cb != null) kv.push(["Charge bean / env temp", `${meta.cb} / ${meta.ce ?? "-"} °${meta.u}`]);
+  if (meta.db != null) kv.push(["Drop bean / env temp", `${meta.db} / ${meta.de ?? "-"} °${meta.u}`]);
+  if (meta.fb != null) kv.push(["First crack bean temp", `${meta.fb} °${meta.u}`]);
+  ev.forEach((t, k) => { if (t) kv.push([nm[k], fmtT(t)]); });
+  if (bt.length) kv.push(["Curve", `${bt.length} points, every ${meta.s} s`]);
+  $("kv").innerHTML = kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+}
+
+async function run(text, isExample) {
+  const msg = $("msg");
+  msg.className = ""; msg.textContent = "";
+  try {
+    const { meta, bt } = await decode(text);
+    show(meta, bt);
+    msg.textContent = isExample ? "Example roast loaded." : "Decoded.";
+    try { if (!isExample) localStorage.setItem("bb-last", text.replace(/^.*#/, "").trim()); } catch (e) {}
+    if (isExample) $("meta").insertAdjacentHTML("beforeend", '<br><span class="tag example">example</span>');
+  } catch (e) {
+    $("card").hidden = true;
+    msg.className = "err";
+    msg.textContent = e.name === "ReferenceError" ? "This browser can't unpack the code." : (e.message || "Couldn't read that code.");
+  }
+}
+
+$("go").addEventListener("click", () => run($("code").value, false));
+$("sample").addEventListener("click", () => { $("code").value = SAMPLE; run(SAMPLE, true); });
+$("code").addEventListener("paste", () => setTimeout(() => $("go").click(), 0));
+
+const hashCode = () => { const h = location.hash.slice(1); return /^[A-Za-z0-9_-]{40,}$/.test(h) ? h : ""; };
+window.addEventListener("hashchange", () => { const h = hashCode(); if (h) { $("code").value = h; run(h, false); } });
+
+let last = ""; try { last = localStorage.getItem("bb-last") || ""; } catch (e) {}
+if (hashCode()) { $("code").value = hashCode(); run(hashCode(), false); }
+else if (last) { $("code").value = last; run(last, false); } else { $("code").value = SAMPLE; run(SAMPLE, true); }
+</script>
+</body></html>
