@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-BGV+rhKLIGgGEFmDnmtUfahXU6Yzg6JVlCymSa4Xq6I='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YNL763GLL71l9ecvrStVFSE7ch4XVEC0ErnidQB9oIU='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -147,13 +147,16 @@ async function decode(text) {
   return { meta, bt: meta.v >= 2 ? q : q.map((v) => v / 2) };   // v1 codes stored half-degrees
 }
 
-function rorSeries(bt, step) {
-  const k = Math.max(1, Math.round(30 / step)), n = bt.length;
+const ROR_SPAN = 15;   // seconds the rate is measured over (like Artisan's Delta Span), then a light 3-point smooth
+function rorSeries(bt, step, tp) {
+  const k = Math.max(1, Math.round(ROR_SPAN / step)), n = bt.length;
   const raw = bt.map((_, i) => {
-    const a = Math.max(0, i - k), b = Math.min(n - 1, i + k);
-    return (bt[b] - bt[a]) / ((b - a) * step) * 60;
+    if (i <= tp) return 0;
+    const a = Math.max(tp, i - k);                    // trailing window, never reaching back before the turning point
+    return (bt[i] - bt[a]) / ((i - a) * step) * 60;
   });
-  return raw.map((_, i) => { const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1); let s = 0; for (let j = a; j <= b; j++) s += raw[j]; return s / (b - a + 1); });
+  raw[tp] = raw[Math.min(n - 1, tp + 1)];
+  return raw.map((_, i) => { const a = Math.max(tp, i - 1), b = Math.min(n - 1, i + 1); let s = 0; for (let j = a; j <= b; j++) s += raw[j]; return s / (b - a + 1); });
 }
 
 function levelDots(lv) {
@@ -175,18 +178,20 @@ function niceStep(range, target) {
 
 function drawChart(meta, bt) {
   const step = meta.s, n = bt.length;
-  const ror = rorSeries(bt, step);
   // start the lines at the turning point (lowest bean temp in the first two minutes)
   let tp = 0;
   for (let i = 1; i < Math.min(n, Math.ceil(120 / step) + 1); i++) if (bt[i] < bt[tp]) tp = i;
+  const ror = rorSeries(bt, step, tp);
   const idx = []; for (let i = tp; i < n; i++) idx.push(i);
   const W = Math.max(300, Math.round($("chart").parentElement.clientWidth)), H = Math.max(260, Math.round(W * 0.5)), L = 44, R = 44, T = 40, B = 34;
   $("chart").setAttribute("viewBox", `0 0 ${W} ${H}`);
   const tMax = (n - 1) * step;
   const bMin = Math.floor(Math.min(...idx.map((i) => bt[i])) / 20) * 20, bMax = Math.ceil(Math.max(...idx.map((i) => bt[i])) / 20) * 20;
-  const ridx = idx.filter((i) => (i - tp) * step >= 45);   // RoR is noisy right after the turning point
-  const rs = ridx.map((i) => ror[i]);
-  const rMin = Math.min(0, Math.floor(Math.min(...rs) / 5) * 5), rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);
+  const ridx = idx;   // the rate line starts at the turning point so the dip and recovery show
+  // axis range: the steep climb right after the turn is clipped off the top, not allowed to flatten the rest
+  const rs = idx.filter((i) => (i - tp) * step >= 45).map((i) => ror[i]);
+  const lo = Math.max(-30, Math.min(...idx.map((i) => ror[i])));
+  const rMin = Math.min(0, Math.floor(lo / 5) * 5), rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);
   const X = (t) => L + (t / tMax) * (W - L - R);
   const YB = (v) => H - B - ((v - bMin) / (bMax - bMin)) * (H - T - B);
   const YR = (v) => H - B - ((v - rMin) / (rMax - rMin)) * (H - T - B);
