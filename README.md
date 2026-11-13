@@ -51,7 +51,7 @@ or change `DEFAULT_VIEWER_URL` in `artisan_qr_label.py`.
 
 ## What is in the QR code
 
-Compressed text: coffee name, roast start (UTC), batch, tasting notes, bag weight, weights in and out, roast level,
+Compressed text: coffee name, roast start (UTC), batch, tasting notes, bag weight (grams), weights in and out, roast level,
 charge / drop / first-crack temperatures, event times, and the bean temperature every 5 seconds in whole degrees C.
 Roast time, development and rate of rise are worked out by the viewer.
 

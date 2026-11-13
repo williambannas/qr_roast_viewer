@@ -147,7 +147,7 @@ def build_meta(d, r, step, notes, bag_weight, level, start, count, utc=None):
     if notes:
         m["nt"] = notes
     if bag_weight:
-        m["bw"] = bag_weight
+        m["bw"] = parse_bag(bag_weight)                     # grams, always a number
     if r["w_in"]:
         m["w"] = [round(r["w_in"], 1), round(r["w_out"], 1)] + ([r["unit"]] if r["unit"] != "g" else [])
     if level:
@@ -187,15 +187,15 @@ def unpack_deltas(buf):
 # Everything with a fixed shape is packed as numbers; only the free text (name, notes, ...) is stored as text.
 # Layout, big-endian, then zlib + base64url:
 #   u8   format version (3; the older JSON codes start with "{")
-#   u8   flags: bit0 has weights, bits1-2 weight unit, bit3 has bag weight, bits4-5 bag-weight unit
+#   u8   flags: bit0 has weights, bits1-2 weight unit
 #   u8   curve step s (seconds)      u8   RoR step rt (seconds, 0 = no recorded RoR)
 #   u32  roast start, UTC epoch secs (0 = unknown)
 #   6 x u16  dry end, FC start, FC end, SC start, SC end, drop (seconds from charge, 0 = none)
-#   u16  batch number (0 = none)     u16 x2  charge / drop weight in tenths   u16  bag weight in tenths
+#   u16  batch number (0 = none)     u16 x2  charge / drop weight in tenths   u16  bag weight in tenths of a gram (0 = none)
 #   u8   roast level in half steps (0 = none)
 #   8 bytes: six 10-bit temps (curve start, charge bean, charge env, drop bean, drop env, FC bean; 1023 = none)
 #   u16  text length   u16  bean-curve bytes   u16  RoR bytes
-#   text (utf-8, NUL-separated: name, notes, bag weight if not a number, batch if not a number, date if no UTC time)
+#   text (utf-8, NUL-separated: name, notes, (unused), batch if not a number, date if no UTC time)
 #   bean-temp deltas, RoR values
 FORMAT_V3 = 3
 TEMP_KEYS = ("b0", "cb", "ce", "db", "de", "fb")
@@ -207,13 +207,13 @@ def _tenths(x):
     return max(0, min(65535, int(round(float(x) * 10))))
 
 
-def _bag_parse(text):
-    """'100g' / '100' / '1.5 kg' -> (tenths, unit code), or None if it is free text."""
+def parse_bag(text):
+    """The bag weight is always a number of grams: '340', '340g' or '340.5' -> 340.0. Anything else is an error."""
     import re
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(g|kg|lb|oz)?\s*", str(text or ""), re.I)
-    if not m:
-        return None
-    return _tenths(m.group(1)), UNITS.index((m.group(2) or "g").lower())
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*g?\s*", str(text), re.I)
+    if not m or not 0 < float(m.group(1)) <= 6553.5:
+        raise ValueError(f"bag weight must be a number of grams (0.1 - 6553.5), got {text!r}")
+    return float(m.group(1))
 
 
 def encode(meta, deltas, ror=None):
@@ -223,14 +223,7 @@ def encode(meta, deltas, ror=None):
     if w and len(w) >= 2 and (w[2] if len(w) > 2 else "g") in UNITS:
         flags |= 1
         w_in, w_out, wu = _tenths(w[0]), _tenths(w[1]), UNITS.index(w[2] if len(w) > 2 else "g")
-    bag, bu, bag_text = 0, 0, ""
-    if meta.get("bw"):
-        p = _bag_parse(meta["bw"])
-        if p:
-            flags |= 8
-            bag, bu = p
-        else:
-            bag_text = str(meta["bw"])
+    bag = _tenths(meta["bw"]) if meta.get("bw") else 0
     batch, batch_text = 0, ""
     if meta.get("b"):
         b = str(meta["b"])
@@ -239,7 +232,7 @@ def encode(meta, deltas, ror=None):
         else:
             batch_text = b
     ut = int(meta.get("ut") or 0)
-    texts = [meta.get("n", ""), meta.get("nt", ""), bag_text, batch_text, "" if ut else meta.get("d", "")]
+    texts = [meta.get("n", ""), meta.get("nt", ""), "", batch_text, "" if ut else meta.get("d", "")]
     text = "\0".join(str(t) for t in texts).rstrip("\0").encode("utf-8")
     ev = [int(x) for x in (meta.get("e") or [])][:6]
     ev += [0] * (6 - len(ev))
@@ -249,7 +242,7 @@ def encode(meta, deltas, ror=None):
         bits = (bits << 10) | (1023 if v is None else max(0, min(1022, int(round(v)))))
     temps = (bits << 4).to_bytes(8, "big")
     bt, rr = pack_deltas(deltas), (pack_deltas(ror) if ror else b"")
-    head = struct.pack(FIXED, FORMAT_V3, flags | (wu << 1) | (bu << 4), int(meta.get("s", 5)), int(meta.get("rt", 0)) if ror else 0,
+    head = struct.pack(FIXED, FORMAT_V3, flags | (wu << 1), int(meta.get("s", 5)), int(meta.get("rt", 0)) if ror else 0,
                        ut, *ev, batch, w_in, w_out, bag, int(round(float(meta.get("lv") or 0) * 2)), temps,
                        len(text), len(bt), len(rr))
     return base64.urlsafe_b64encode(zlib.compress(head + text + bt + rr, 9)).decode().rstrip("=")
@@ -276,10 +269,8 @@ def decode_v3(raw):
     if flags & 1:
         wu = UNITS[(flags >> 1) & 3]
         meta["w"] = [w_in / 10, w_out / 10] + ([wu] if wu != "g" else [])
-    if flags & 8:
-        meta["bw"] = f"{bag / 10:g}{UNITS[(flags >> 4) & 3]}"
-    elif text[2]:
-        meta["bw"] = text[2]
+    if bag:
+        meta["bw"] = bag / 10                                # grams
     if lv:
         meta["lv"] = lv / 2
     bits = int.from_bytes(temps, "big") >> 4
@@ -442,7 +433,7 @@ def main():
     ap.add_argument("--width", type=float, default=50, help="label width mm")
     ap.add_argument("--height", type=float, default=30, help="label height mm")
     ap.add_argument("--name", help="override coffee name stored in the code")
-    ap.add_argument("--weight", default=env("BAG_WEIGHT"), help='bag weight stored in the code, e.g. 340 or "12oz"')
+    ap.add_argument("--weight", default=env("BAG_WEIGHT"), help="bag weight in grams, a number such as 340")
     ap.add_argument("--notes", help="tasting notes stored in the code (default: Artisan cupping notes / Beans box)")
     ap.add_argument("--level", type=float, choices=[1, 1.5, 2, 2.5, 3, 3.5, 4], help="force roast level")
     ap.add_argument("--viewer-url", default=env("VIEWER_URL", DEFAULT_VIEWER_URL), help="address of your hosted roast viewer; the QR then opens it "
@@ -473,9 +464,12 @@ def main():
             paths.append(p)
 
     os.makedirs(a.out, exist_ok=True)
-    bag_w = a.weight
-    if bag_w and bag_w.replace(".", "", 1).isdigit():
-        bag_w += "g"
+    bag_w = None
+    if a.weight:
+        try:
+            bag_w = f"{parse_bag(a.weight):g}g"            # shown on the label as e.g. 340g
+        except ValueError as e:
+            raise SystemExit(f"--weight: {e}")
     for p in paths:
         try:
             d = al.load_alog(p)
