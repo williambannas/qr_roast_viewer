@@ -1,0 +1,9 @@
+{
+  // Cloudflare: serve the static viewer in ./docs (no Worker code needed).
+  // "name" must match the Worker name in the Cloudflare dashboard.
+  "name": "qr-roast-viewer",
+  "compatibility_date": "2026-11-12",
+  "assets": {
+    "directory": "./docs"
+  }
+}

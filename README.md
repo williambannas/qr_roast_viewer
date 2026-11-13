@@ -6,7 +6,7 @@ scanning the label's QR code.
 - `artisan_qr_label.py` - label with the roast time (UTC), bag weight and a QR code holding the whole roast
   (details + bean-temperature curve). Scanning it opens the viewer page.
 - `artisan_labels.py` - the original text label (name, notes, roast level, stats), and shared helpers.
-- `docs/index.html` - the viewer page (static, runs entirely in the browser, hosted on Cloudflare Pages).
+- `docs/index.html` - the viewer page (static, runs entirely in the browser, hosted on Cloudflare).
 - `fonts/` - fonts used by the labels. Keep this folder next to the scripts.
 
 ## Set up
@@ -28,22 +28,23 @@ Useful options: `--shift-x/--shift-y` (nudge the print), `--density` (default 5)
 `--viewer-url` (where the QR points), `--title`, `--decode "<scanned text>"`. Run with `--help` for all of them.
 Settings can also come from the environment: `VIEWER_URL`, `PRINTER`, `BAG_WEIGHT`, `ROAST_DIR`, `SHIFT_X`, `SHIFT_Y`.
 
-## The viewer page (Cloudflare Pages)
+## The viewer page (Cloudflare)
 
-The QR code holds a link like `https://<your-project>.pages.dev/#<compressed roast data>`. The data sits after the
-`#`, so the browser reads it and the server never receives it. The page draws the roast and the bean-temp and
-rate-of-rise curves. It is plain static files in `docs/`: no build step.
+The QR code holds a link like `https://<your-site>/#<compressed roast data>`. The data sits after the `#`, so the
+browser reads it and the server never receives it. The page draws the roast and the bean-temp and rate-of-rise
+curves. It is plain static files in `docs/`: no build step.
 
-To publish it: in the Cloudflare dashboard open **Workers & Pages > Create application > Pages > Connect to Git**,
-pick this repository, leave the **build command** empty and set the **build output directory** to `docs`.
-Every push to `main` then redeploys the page. `docs/_headers` adds a few security headers.
+`wrangler.jsonc` tells Cloudflare to serve `docs/` as static assets. To publish: in the Cloudflare dashboard go to
+**Workers & Pages > Create application**, connect this GitHub repository, keep **Deploy command** `npx wrangler deploy`,
+and leave **Root directory** empty (it is a path inside the repo, not the folder to publish). The `name` in
+`wrangler.jsonc` must match the Worker's name in the dashboard. Every push to `main` redeploys.
+`docs/_headers` adds a few security headers.
 
-The address ends up on every printed label, so choose it with care: the project name decides the `*.pages.dev`
-hostname (and cannot be renamed later), or attach a custom domain of your own in the project's settings.
-Then point the labels at it:
+The address ends up on every printed label, so choose it with care (a custom domain in the project's settings keeps
+labels working if you ever move hosts). Then point the labels at it:
 
 ```
-export VIEWER_URL=https://<your-project>.pages.dev/
+export VIEWER_URL=https://<your-site>/
 ```
 
 or change `DEFAULT_VIEWER_URL` in `artisan_qr_label.py`.
