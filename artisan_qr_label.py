@@ -90,6 +90,41 @@ def roast_utc(d, r):
         return None
 
 
+def ror_samples(d, step, unit="C"):
+    """The roaster's own recorded BT RoR (an Artisan extra-device curve named like 'BT RoR'), sampled on the same
+    grid as the bean-temp curve, in whole deg C per minute -> [first value, deltas...] as a list, or None."""
+    names = list(d.get("extraname1") or [])
+    xs, ys = d.get("extratimex") or [], d.get("extratemp1") or []
+    idx = next((i for i, nm in enumerate(names) if isinstance(nm, str) and "ror" in nm.lower() and "bt" in nm.lower()
+                and "d-" not in nm.lower() and i < len(xs) and i < len(ys)), None)
+    if idx is None:
+        return None
+    tx, ty = xs[idx], ys[idx]
+    ti, bx = d.get("timeindex") or [0] * 8, d.get("timex") or []
+    n = min(len(tx), len(ty))
+    if n < 2 or not bx:
+        return None
+    i0 = ti[0] if ti[0] else 0
+    t0 = bx[i0]
+    t1 = bx[min(ti[6] if ti[6] else len(bx) - 1, len(bx) - 1)]
+    scale = 5 / 9 if unit == "F" else 1.0
+    out, k = [], 0
+    while t0 + k * step <= t1 + 1e-6:
+        t = t0 + k * step
+        j = bisect.bisect_left(tx, t, 0, n)
+        if j <= 0:
+            v = ty[0]
+        elif j >= n:
+            v = ty[n - 1]
+        else:
+            v = ty[j - 1] + (ty[j] - ty[j - 1]) * (t - tx[j - 1]) / (tx[j] - tx[j - 1]) if tx[j] > tx[j - 1] else ty[j]
+        out.append(max(-40, min(127, round(v * scale))))      # the charge-time plunge is clipped; it is off the chart anyway
+        k += 1
+    if len(out) < 2:
+        return None
+    return [out[0]] + [out[i] - out[i - 1] for i in range(1, len(out))]
+
+
 def build_meta(d, r, step, notes, bag_weight, level, start, count, utc=None):
     """Roast details for the QR. Kept lean: totals the viewer can work out itself (roast time = drop time,
     development = drop - first crack, point count) are not stored."""
@@ -148,8 +183,12 @@ def unpack_deltas(buf):
     return out
 
 
-def encode(meta, deltas):
-    raw = json.dumps(meta, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n" + pack_deltas(deltas)
+def encode(meta, deltas, ror=None):
+    tail = b""
+    if ror:
+        tail = pack_deltas(ror)
+        meta = dict(meta, rl=len(tail))                      # rl: how many bytes at the very end are the RoR section
+    raw = json.dumps(meta, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n" + pack_deltas(deltas) + tail
     return base64.urlsafe_b64encode(zlib.compress(raw, 9)).decode().rstrip("=")
 
 
@@ -163,6 +202,13 @@ def decode(text):
     raw = zlib.decompress(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
     head, _, tail = raw.partition(b"\n")
     meta = json.loads(head.decode("utf-8"))
+    rl = int(meta.get("rl", 0) or 0)
+    if rl:
+        tail, rtail = tail[:-rl], tail[-rl:]
+        r = unpack_deltas(rtail)
+        for i in range(1, len(r)):
+            r[i] += r[i - 1]
+        meta["ror"] = r                                      # recorded BT RoR, whole deg C/min, same grid as the curve
     deltas = unpack_deltas(tail)
     if "b0" not in meta:
         return meta, []
@@ -181,7 +227,12 @@ def make_qr(d, r, notes, bag_weight, level, max_modules_by_m, utc=None, viewer_u
             for step in STEPS:
                 cs = curve_samples(d, step, r["tunit"])
                 start, deltas = cs if cs else (None, [])        # a roast without a bean-temp curve still gets a label
-                s = encode(build_meta(d, r, step, nt, bag_weight, level, start, len(deltas) + 1, utc), deltas)
+                rstep = step * 2                               # the recorded RoR is smooth: half as many points are plenty
+                ror = ror_samples(d, rstep, r["tunit"]) if cs else None
+                meta = build_meta(d, r, step, nt, bag_weight, level, start, len(deltas) + 1, utc)
+                if ror:
+                    meta["rt"] = rstep                         # rt: seconds between RoR points
+                s = encode(meta, deltas, ror)
                 if viewer_url:                               # scanning opens the viewer; the data rides after the #
                     s = viewer_url.split("#")[0] + "#" + s
                 qr = segno.make(s, error="L", micro=False, boost_error=False)

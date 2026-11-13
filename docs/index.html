@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YNL763GLL71l9ecvrStVFSE7ch4XVEC0ErnidQB9oIU='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/qTN9hiTDG055ESTSoepCDyg4SUekN5hzWHn3JuGmvk='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -134,17 +134,25 @@ async function decode(text) {
   }
   const nl = raw.indexOf(10);
   const meta = JSON.parse(new TextDecoder().decode(raw.slice(0, nl)));
-  const tail = raw.slice(nl + 1), dv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
-  const q = [meta.b0];
-  for (let p = 0; p < tail.length; ) {
-    const b = dv.getInt8(p);
-    if (b === -128) { q.push(q[q.length - 1] + dv.getInt16(p + 1, true)); p += 3; }
-    else { q.push(q[q.length - 1] + b); p += 1; }
-  }
+  const all = raw.slice(nl + 1);
+  const rl = Math.max(0, Math.min(all.length, num(meta.rl)));           // rl: bytes at the very end holding the recorded RoR
+  const unpack = (buf, first) => {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength), out = [first];
+    for (let p = 0; p < buf.length; ) {
+      const b = dv.getInt8(p);
+      if (b === -128) { out.push(out[out.length - 1] + dv.getInt16(p + 1, true)); p += 3; }
+      else { out.push(out[out.length - 1] + b); p += 1; }
+    }
+    return out;
+  };
+  const q = unpack(all.slice(0, all.length - rl), meta.b0);
+  let rec = null;                                                         // recorded RoR: [first value, then deltas] on a grid of rt seconds
+  if (rl) { const r = unpack(all.slice(all.length - rl), 0); r.shift(); rec = r.map((v) => num(v)); }
   if (!meta || typeof meta !== "object" || q.length > 5000) throw new Error("That text isn't a Buddy Beans roast code.");
   meta.s = Math.max(1, num(meta.s, 5));
   meta.u = meta.u === "F" ? "F" : "C";                       // v2 codes: always whole degrees C
-  return { meta, bt: meta.v >= 2 ? q : q.map((v) => v / 2) };   // v1 codes stored half-degrees
+  meta.rt = Math.max(1, num(meta.rt, meta.s * 2));
+  return { meta, bt: meta.v >= 2 ? q : q.map((v) => v / 2), rec };   // v1 codes stored half-degrees
 }
 
 const ROR_SPAN = 15;   // seconds the rate is measured over (like Artisan's Delta Span), then a light 3-point smooth
@@ -176,12 +184,18 @@ function niceStep(range, target) {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
 }
 
-function drawChart(meta, bt) {
+function drawChart(meta, bt, rec) {
   const step = meta.s, n = bt.length;
   // start the lines at the turning point (lowest bean temp in the first two minutes)
   let tp = 0;
   for (let i = 1; i < Math.min(n, Math.ceil(120 / step) + 1); i++) if (bt[i] < bt[tp]) tp = i;
-  const ror = rorSeries(bt, step, tp);
+  let ror;
+  if (rec && rec.length > 1) {                       // the roaster's own recorded rate of rise: spread it onto the bean-temp grid
+    ror = bt.map((_, i) => {
+      const x = (i * step) / meta.rt, a = Math.min(rec.length - 1, Math.floor(x)), b = Math.min(rec.length - 1, a + 1);
+      return rec[a] + (rec[b] - rec[a]) * (x - a);
+    });
+  } else ror = rorSeries(bt, step, tp);              // no recorded curve in this code: work it out from the bean temp
   const idx = []; for (let i = tp; i < n; i++) idx.push(i);
   const W = Math.max(300, Math.round($("chart").parentElement.clientWidth)), H = Math.max(260, Math.round(W * 0.5)), L = 44, R = 44, T = 40, B = 34;
   $("chart").setAttribute("viewBox", `0 0 ${W} ${H}`);
@@ -189,8 +203,8 @@ function drawChart(meta, bt) {
   const bMin = Math.floor(Math.min(...idx.map((i) => bt[i])) / 20) * 20, bMax = Math.ceil(Math.max(...idx.map((i) => bt[i])) / 20) * 20;
   const ridx = idx;   // the rate line starts at the turning point so the dip and recovery show
   // axis range: the steep climb right after the turn is clipped off the top, not allowed to flatten the rest
-  const rs = idx.filter((i) => (i - tp) * step >= 45).map((i) => ror[i]);
-  const lo = Math.max(-30, Math.min(...idx.map((i) => ror[i])));
+  const rs = idx.filter((i) => rec || (i - tp) * step >= 45).map((i) => ror[i]);
+  const lo = Math.max(-20, Math.min(...idx.map((i) => ror[i])));
   const rMin = Math.min(0, Math.floor(lo / 5) * 5), rMax = Math.max(5, Math.ceil(Math.max(...rs) / 5) * 5);
   const X = (t) => L + (t / tMax) * (W - L - R);
   const YB = (v) => H - B - ((v - bMin) / (bMax - bMin)) * (H - T - B);
@@ -201,7 +215,7 @@ function drawChart(meta, bt) {
     g += `<line x1="${L}" x2="${W - R}" y1="${YB(v)}" y2="${YB(v)}" stroke="var(--line)"/>` +
          `<text x="${L - 6}" y="${YB(v) + 4}" text-anchor="end" font-size="11" fill="var(--bt)">${Math.round(v)}</text>`;
   }
-  const rstep = niceStep(rMax - rMin, 4);
+  const rstep = niceStep(rMax - rMin, 5);
   for (let v = Math.ceil(rMin / rstep) * rstep; v <= rMax + 1e-6; v += rstep) {
     g += `<text x="${W - R + 6}" y="${YR(v) + 4}" font-size="11" fill="var(--ror)">${Math.round(v)}</text>`;
   }
@@ -231,7 +245,7 @@ function drawChart(meta, bt) {
 }
 
 let CUR = null;
-window.addEventListener("resize", () => { if (CUR && !$("card").hidden) drawChart(CUR.meta, CUR.bt); });
+window.addEventListener("resize", () => { if (CUR && !$("card").hidden) drawChart(CUR.meta, CUR.bt, CUR.rec); });
 
 const utcStr = (meta) => {
   if (!meta.ut) return meta.d;
@@ -239,8 +253,8 @@ const utcStr = (meta) => {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
 };
 
-function show(meta, bt) {
-  CUR = { meta, bt };
+function show(meta, bt, rec) {
+  CUR = { meta, bt, rec };
   const ev0 = (Array.isArray(meta.e) ? meta.e : []).map((t) => num(t));
   meta.T = num(meta.T) || ev0[5] || 0;                                   // roast time = drop time
   meta.dv = num(meta.dv) || (ev0[1] && ev0[5] ? ev0[5] - ev0[1] : 0);   // development = drop - first crack
@@ -260,7 +274,7 @@ function show(meta, bt) {
   if (meta.lv) items.push(["Roast level", levelDots(meta.lv)]);
   $("stats").innerHTML = items.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
   $("chart").parentElement.hidden = bt.length < 2;
-  if (bt.length >= 2) drawChart(meta, bt);
+  if (bt.length >= 2) drawChart(meta, bt, rec);
   const ev = (Array.isArray(meta.e) ? meta.e : []).slice(0, 6).map((t) => num(t)), nm = ["Dry end", "First crack", "First crack end", "Second crack", "Second crack end", "Drop"];
   const kv = [];
   kv.push(["Coffee", meta.n], [meta.ut ? "Roast start" : "Roast date", utcStr(meta)]);
@@ -278,8 +292,8 @@ async function run(text, isExample) {
   const msg = $("msg");
   msg.className = ""; msg.textContent = "";
   try {
-    const { meta, bt } = await decode(text);
-    show(meta, bt);
+    const { meta, bt, rec } = await decode(text);
+    show(meta, bt, rec);
     msg.textContent = isExample ? "Example roast loaded." : "Decoded.";
     try { if (!isExample) localStorage.setItem("bb-last", text.replace(/^.*#/, "").trim()); } catch (e) {}
     if (isExample) $("meta").insertAdjacentHTML("beforeend", '<br><span class="tag example">example</span>');
