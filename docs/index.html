@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-h5zM6zsCFgHVxonyZ4Hl1OKLzwBfOZsnh6x4nG9tO6U='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-p6dQU6xQPiwLWmtf0ZIlTrf5BeQbdy+ACucZRV+98eo='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -120,6 +120,45 @@ async function inflate(bytes) {
   return new Uint8Array(await new Response(ds.readable).arrayBuffer());
 }
 
+const UNITS = ["g", "kg", "lb", "oz"];
+function unpackDeltas(buf, first) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength), out = [first];
+  for (let p = 0; p < buf.length; ) {
+    const b = dv.getInt8(p);
+    if (b === -128) { out.push(out[out.length - 1] + dv.getInt16(p + 1, true)); p += 3; }
+    else { out.push(out[out.length - 1] + b); p += 1; }
+  }
+  return out;
+}
+
+// Binary format 3: fixed-size numbers first, then the free text, the bean-temp curve and the recorded rate of rise.
+function decodeV3(raw) {
+  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  if (raw.length < 43) throw new Error("That text isn't a Buddy Beans roast code.");
+  const flags = dv.getUint8(1), s = dv.getUint8(2), rt = dv.getUint8(3), ut = dv.getUint32(4);
+  const e = [0, 1, 2, 3, 4, 5].map((i) => dv.getUint16(8 + 2 * i)), batch = dv.getUint16(20);
+  const wIn = dv.getUint16(22), wOut = dv.getUint16(24), bag = dv.getUint16(26), lv = dv.getUint8(28);
+  let bits = 0n;
+  for (let i = 0; i < 8; i++) bits = (bits << 8n) | BigInt(dv.getUint8(29 + i));
+  bits >>= 4n;
+  const lt = dv.getUint16(37), lb = dv.getUint16(39), lr = dv.getUint16(41), o = 43;
+  if (o + lt + lb + lr > raw.length) throw new Error("That text isn't a Buddy Beans roast code.");
+  const text = new TextDecoder().decode(raw.slice(o, o + lt)).split("\0");
+  const meta = { v: 3, u: "C", n: text[0] || "", s: Math.max(1, s), e };
+  if (text[1]) meta.nt = text[1];
+  if (ut) meta.ut = ut; else if (text[4]) meta.d = text[4];
+  if (batch) meta.b = String(batch); else if (text[3]) meta.b = text[3];
+  if (flags & 1) { const u = UNITS[(flags >> 1) & 3]; meta.w = [wIn / 10, wOut / 10].concat(u === "g" ? [] : [u]); }
+  if (flags & 8) meta.bw = String(bag / 10) + UNITS[(flags >> 4) & 3]; else if (text[2]) meta.bw = text[2];
+  if (lv) meta.lv = lv / 2;
+  ["b0", "cb", "ce", "db", "de", "fb"].forEach((k, i) => { const v = Number((bits >> BigInt(10 * (5 - i))) & 1023n); if (v !== 1023) meta[k] = v; });
+  const q = meta.b0 == null ? [] : unpackDeltas(raw.slice(o + lt, o + lt + lb), meta.b0);
+  let rec = null;
+  if (rt && lr) { const r = unpackDeltas(raw.slice(o + lt + lb, o + lt + lb + lr), 0); r.shift(); rec = r; meta.rt = rt; }
+  if (q.length > 5000) throw new Error("That text isn't a Buddy Beans roast code.");
+  return { meta, bt: q, rec };
+}
+
 async function decode(text) {
   let s = text.replace(/\s+/g, "").replace(/^.*#/, "").replace(/^BB1:/, "");
   let raw;
@@ -132,6 +171,7 @@ async function decode(text) {
     if (e instanceof ReferenceError) throw e;
     throw new Error("That text isn't a Buddy Beans roast code. Copy all of the text the scan shows.");
   }
+  if (raw[0] === 3) return decodeV3(raw);                                 // current binary format; older codes start with "{"
   const nl = raw.indexOf(10);
   const meta = JSON.parse(new TextDecoder().decode(raw.slice(0, nl)));
   let all = raw.slice(nl + 1);

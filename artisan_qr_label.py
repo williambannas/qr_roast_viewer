@@ -183,37 +183,130 @@ def unpack_deltas(buf):
     return out
 
 
-TEMP_KEYS = ("cb", "ce", "db", "de", "fb")     # charge / drop bean and environment temps, first-crack bean temp
+# ---------- binary format (version 3) ----------
+# Everything with a fixed shape is packed as numbers; only the free text (name, notes, ...) is stored as text.
+# Layout, big-endian, then zlib + base64url:
+#   u8   format version (3; the older JSON codes start with "{")
+#   u8   flags: bit0 has weights, bits1-2 weight unit, bit3 has bag weight, bits4-5 bag-weight unit
+#   u8   curve step s (seconds)      u8   RoR step rt (seconds, 0 = no recorded RoR)
+#   u32  roast start, UTC epoch secs (0 = unknown)
+#   6 x u16  dry end, FC start, FC end, SC start, SC end, drop (seconds from charge, 0 = none)
+#   u16  batch number (0 = none)     u16 x2  charge / drop weight in tenths   u16  bag weight in tenths
+#   u8   roast level in half steps (0 = none)
+#   8 bytes: six 10-bit temps (curve start, charge bean, charge env, drop bean, drop env, FC bean; 1023 = none)
+#   u16  text length   u16  bean-curve bytes   u16  RoR bytes
+#   text (utf-8, NUL-separated: name, notes, bag weight if not a number, batch if not a number, date if no UTC time)
+#   bean-temp deltas, RoR values
+FORMAT_V3 = 3
+TEMP_KEYS = ("b0", "cb", "ce", "db", "de", "fb")
+UNITS = ("g", "kg", "lb", "oz")
+FIXED = ">BBBBI6HHHHHB8sHHH"
 
 
-def pack_temps(meta):
-    """Pull the five temperatures out of the meta dict into a 7-byte block of 10-bit values (1023 = not recorded)."""
-    bits = 0
-    for k in TEMP_KEYS:
-        v = meta.pop(k, None)
-        v = 1023 if v is None else max(0, min(1022, int(round(v))))
-        bits = (bits << 10) | v
-    return bits.to_bytes(7, "big")
+def _tenths(x):
+    return max(0, min(65535, int(round(float(x) * 10))))
 
 
-def unpack_temps(block, meta):
-    bits = int.from_bytes(block, "big")
-    for i, k in enumerate(TEMP_KEYS):
-        v = (bits >> (10 * (len(TEMP_KEYS) - 1 - i))) & 1023
-        if v != 1023:
-            meta[k] = v
+def _bag_parse(text):
+    """'100g' / '100' / '1.5 kg' -> (tenths, unit code), or None if it is free text."""
+    import re
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(g|kg|lb|oz)?\s*", str(text or ""), re.I)
+    if not m:
+        return None
+    return _tenths(m.group(1)), UNITS.index((m.group(2) or "g").lower())
 
 
 def encode(meta, deltas, ror=None):
     meta = dict(meta)
-    tail = b""
-    if ror:
-        tail = pack_deltas(ror)
-        meta["rl"] = len(tail)                               # rl: how many bytes sit between the curve and the temps block
-    temps = pack_temps(meta)                                 # the temps block always closes the payload; "h" marks it
-    meta["h"] = 1
-    raw = json.dumps(meta, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n" + pack_deltas(deltas) + tail + temps
-    return base64.urlsafe_b64encode(zlib.compress(raw, 9)).decode().rstrip("=")
+    flags, w_in, w_out, wu = 0, 0, 0, 0
+    w = meta.get("w")
+    if w and len(w) >= 2 and (w[2] if len(w) > 2 else "g") in UNITS:
+        flags |= 1
+        w_in, w_out, wu = _tenths(w[0]), _tenths(w[1]), UNITS.index(w[2] if len(w) > 2 else "g")
+    bag, bu, bag_text = 0, 0, ""
+    if meta.get("bw"):
+        p = _bag_parse(meta["bw"])
+        if p:
+            flags |= 8
+            bag, bu = p
+        else:
+            bag_text = str(meta["bw"])
+    batch, batch_text = 0, ""
+    if meta.get("b"):
+        b = str(meta["b"])
+        if b.isdigit() and int(b) < 65536:
+            batch = int(b)
+        else:
+            batch_text = b
+    ut = int(meta.get("ut") or 0)
+    texts = [meta.get("n", ""), meta.get("nt", ""), bag_text, batch_text, "" if ut else meta.get("d", "")]
+    text = "\0".join(str(t) for t in texts).rstrip("\0").encode("utf-8")
+    ev = [int(x) for x in (meta.get("e") or [])][:6]
+    ev += [0] * (6 - len(ev))
+    bits = 0
+    for k in TEMP_KEYS:
+        v = meta.get(k)
+        bits = (bits << 10) | (1023 if v is None else max(0, min(1022, int(round(v)))))
+    temps = (bits << 4).to_bytes(8, "big")
+    bt, rr = pack_deltas(deltas), (pack_deltas(ror) if ror else b"")
+    head = struct.pack(FIXED, FORMAT_V3, flags | (wu << 1) | (bu << 4), int(meta.get("s", 5)), int(meta.get("rt", 0)) if ror else 0,
+                       ut, *ev, batch, w_in, w_out, bag, int(round(float(meta.get("lv") or 0) * 2)), temps,
+                       len(text), len(bt), len(rr))
+    return base64.urlsafe_b64encode(zlib.compress(head + text + bt + rr, 9)).decode().rstrip("=")
+
+
+def decode_v3(raw):
+    n = struct.calcsize(FIXED)
+    f = struct.unpack_from(FIXED, raw, 0)
+    flags, s, rt, ut = f[1], f[2], f[3], f[4]
+    ev, batch, w_in, w_out, bag, lv, temps, lt, lb, lr = f[5:11], f[11], f[12], f[13], f[14], f[15], f[16], f[17], f[18], f[19]
+    text = raw[n:n + lt].decode("utf-8").split("\0") + [""] * 5
+    bt_bytes, ror_bytes = raw[n + lt:n + lt + lb], raw[n + lt + lb:n + lt + lb + lr]
+    meta = {"v": 3, "n": text[0], "s": s, "e": list(ev)}
+    if text[1]:
+        meta["nt"] = text[1]
+    if ut:
+        meta["ut"] = ut
+    elif text[4]:
+        meta["d"] = text[4]
+    if batch:
+        meta["b"] = str(batch)
+    elif text[3]:
+        meta["b"] = text[3]
+    if flags & 1:
+        wu = UNITS[(flags >> 1) & 3]
+        meta["w"] = [w_in / 10, w_out / 10] + ([wu] if wu != "g" else [])
+    if flags & 8:
+        meta["bw"] = f"{bag / 10:g}{UNITS[(flags >> 4) & 3]}"
+    elif text[2]:
+        meta["bw"] = text[2]
+    if lv:
+        meta["lv"] = lv / 2
+    bits = int.from_bytes(temps, "big") >> 4
+    for i, k in enumerate(TEMP_KEYS):
+        v = (bits >> (10 * (len(TEMP_KEYS) - 1 - i))) & 1023
+        if v != 1023:
+            meta[k] = v
+    if rt and ror_bytes:
+        meta["rt"] = rt
+        r = unpack_deltas(ror_bytes)
+        for i in range(1, len(r)):
+            r[i] += r[i - 1]
+        meta["ror"] = r
+    if "b0" not in meta:
+        return meta, []
+    q = [meta["b0"]]
+    for dl in unpack_deltas(bt_bytes):
+        q.append(q[-1] + dl)
+    return meta, q
+
+
+def unpack_temps(block, meta):
+    bits = int.from_bytes(block, "big")
+    for i, k in enumerate(("cb", "ce", "db", "de", "fb")):
+        v = (bits >> (10 * (4 - i))) & 1023
+        if v != 1023:
+            meta[k] = v
 
 
 def decode(text):
@@ -224,7 +317,9 @@ def decode(text):
     if text.startswith(PREFIX):
         text = text[len(PREFIX):]
     raw = zlib.decompress(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
-    head, _, tail = raw.partition(b"\n")
+    if raw[:1] == bytes([FORMAT_V3]):
+        return decode_v3(raw)
+    head, _, tail = raw.partition(b"\n")                    # older JSON-based codes
     meta = json.loads(head.decode("utf-8"))
     if meta.get("h"):                                        # newest codes: the five temps are a 7-byte block at the very end
         tail, block = tail[:-7], tail[-7:]
