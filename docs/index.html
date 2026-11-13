@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Y9FNsZ6FH0zT7gPrE9AV0jNLilLRcbG3E/7Y6J0WuOY='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Jd7YGTFUMfv3UnBygzYI/nuIwFJLc+1ir0qD4PYrvyM='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"></head><body><title>Roast Viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one column. Paste box on top, then the roast card: name and date, key stats, curve chart, detail list. */
@@ -195,6 +195,11 @@ function drawChart(meta, bt, rec) {
       const x = (i * step) / meta.rt, a = Math.min(rec.length - 1, Math.floor(x)), b = Math.min(rec.length - 1, a + 1);
       return rec[a] + (rec[b] - rec[a]) * (x - a);
     });
+    // the stored points are whole numbers every 10 s, which looks stepped: smooth gently (5-point binomial, twice)
+    for (let pass = 0; pass < 2; pass++) {
+      const src = ror.slice(), w = [1, 4, 6, 4, 1];
+      ror = src.map((_, i) => { let s = 0, t = 0; for (let k = -2; k <= 2; k++) { const j = i + k; if (j >= 0 && j < src.length) { s += src[j] * w[k + 2]; t += w[k + 2]; } } return s / t; });
+    }
   } else ror = rorSeries(bt, step, tp);              // no recorded curve in this code: work it out from the bean temp
   const idx = []; for (let i = tp; i < n; i++) idx.push(i);
   const W = Math.max(300, Math.round($("chart").parentElement.clientWidth)), H = Math.max(260, Math.round(W * 0.5)), L = 44, R = 44, T = 40, B = 34;
